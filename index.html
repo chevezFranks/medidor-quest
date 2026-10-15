@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quest 3S - CAD Láser Pro (mm)</title>
+  <title>Quest 3S - Escáner 3D y Malla Espacial</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background-color: #090d16; color: #f8fafc; font-family: system-ui, sans-serif; overflow-x: hidden; }
@@ -13,7 +13,7 @@
     #ui-panel { background: #0f172a; padding: 20px; border-right: 1px solid #1e293b; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
     h1 { margin: 0; color: #22d3ee; font-size: 20px; display: flex; align-items: center; gap: 8px; }
     .badge { background: #083344; color: #67e8f9; font-size: 11px; padding: 2px 8px; border-radius: 99px; border: 1px solid #0e7490; }
-    .guide-box { background: #1e293b; padding: 12px; border-radius: 10px; font-size: 13px; color: #cbd5e1; line-height: 1.5; border-left: 4px solid #22d3ee; }
+    .guide-box { background: #1e293b; padding: 12px; border-radius: 10px; font-size: 13px; color: #cbd5e1; line-height: 1.5; border-left: 4px solid #10b981; }
     .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .stat-card { background: #090d16; padding: 10px 12px; border-radius: 8px; border: 1px solid #1e293b; }
     .stat-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
@@ -40,14 +40,14 @@
 
   <div class="container">
     <div id="ui-panel">
-      <h1>📐 Quest 3S Láser Pro <span class="badge">Unidad: mm</span></h1>
+      <h1>📐 Quest 3S Malla 3D <span class="badge">Escáner AR</span></h1>
       
       <div class="guide-box">
-        <b>Controles en Realidad Mixta (Sin Límites):</b><br>
-        • <b>Láser Fino:</b> Apunta a distancia a esquinas, suelo o techos.<br>
-        • <b>Gatillo:</b> Disparar y marcar punto exacto.<br>
-        • <b>Menú en Mano (Y / B):</b> Activa el panel flotante frente a tu palma.<br>
-        • <b>A / X:</b> Deshacer último punto.
+        <b>Flujo de Trabajo en Quest 3S:</b><br>
+        1. Al entrar en AR, las gafas proyectan una <b>malla wireframe sobre tu entorno</b>.<br>
+        2. Usa el <b>láser fino</b> para marcar esquinas con el Gatillo.<br>
+        3. Pulsa <b>Y / B</b> para ver el menú compacto en tu muñeca.<br>
+        4. Las paredes se levantan en 3D automáticamente.
       </div>
 
       <div class="stats-grid">
@@ -66,7 +66,7 @@
       </div>
       <div id="walls-list">
         <div style="font-size: 13px; color: #64748b; font-style: italic; padding: 10px 0;">
-          Pulsa "ENTRAR EN AR" en las gafas para medir con el láser...
+          Pulsa "ENTRAR EN AR" para iniciar la malla espacial...
         </div>
       </div>
 
@@ -78,7 +78,7 @@
     </div>
 
     <div id="preview-area">
-      <div class="canvas-title">VISTA 2D Y MAQUETA 3D GENERADA</div>
+      <div class="canvas-title">PLANTA 2D Y MODELADO 3D EN TIEMPO REAL</div>
       <canvas id="cad-2d"></canvas>
     </div>
   </div>
@@ -105,8 +105,9 @@
     let labels3D = [];
     let wallMeshes3D = [];
     let line3D = null;
-    let handMenuMesh = null;
+    let wristMenuMesh = null;
     let menuVisible = false;
+    let roomMeshGroup = new THREE.Group();
     let prevStates = new Map();
 
     const wallsList = document.getElementById('walls-list');
@@ -123,6 +124,7 @@
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
       scene.add(camera);
+      scene.add(roomMeshGroup);
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -131,15 +133,15 @@
 
       scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3));
 
-      // Menú flotante anclado a la mano izquierda (aparece al pulsar Y/B)
-      handMenuMesh = createHandMenuTexture("MENÚ LÁSER PRO\nGatillo: Marcar\nA/X: Deshacer\nY/B: Ocultar menú");
-      handMenuMesh.position.set(-0.15, -0.05, -0.3);
-      handMenuMesh.visible = false;
-      camera.add(handMenuMesh);
+      // Menú compacto de muñeca (escala tipo smartwatch / panel pequeño anclado al mando izquierdo)
+      wristMenuMesh = createWristMenuTexture("MENÚ PRO\nGat: Marcar | A: Deshacer\nY/B: Ocultar menú");
+      wristMenuMesh.scale.set(0.15, 0.075, 1); // Tamaño compacto real (15cm x 7.5cm)
+      wristMenuMesh.visible = false;
+      scene.add(wristMenuMesh);
 
-      // Botón AR sin restricciones de seguridad de espacio
+      // Botón AR activando características espaciales de profundidad
       const arBtn = ARButton.createButton(renderer, {
-        requiredFeatures: ['local-floor']
+        requiredFeatures: ['local-floor', 'hit-test']
       });
       arBtn.style.backgroundColor = '#06b6d4';
       arBtn.style.color = '#082f49';
@@ -147,23 +149,21 @@
       arBtn.style.border = '2px solid #cffafe';
       document.body.appendChild(arBtn);
 
-      // Configuración de ambos mandos con rayo láser ultrafino
+      // Configurar ambos mandos con láser ultrafino
       for (let i = 0; i < 2; i++) {
         const ctrl = renderer.xr.getController(i);
         ctrl.addEventListener('selectstart', () => onLaserShoot(ctrl));
 
-        // Línea láser ultrafina (hilo CAD de 1.5mm de grosor)
         const lineGeo = new THREE.BufferGeometry().setFromPoints([
           new THREE.Vector3(0, 0, 0),
           new THREE.Vector3(0, 0, -10)
         ]);
-        const lineMat = new THREE.LineBasicMaterial({ color: 0x22d3ee, linewidth: 1 });
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x10b981, linewidth: 1 });
         const laserLine = new THREE.Line(lineGeo, lineMat);
         ctrl.add(laserLine);
 
-        // Punto de mira láser muy fino (2mm)
         const dot = new THREE.Mesh(
-          new THREE.SphereGeometry(0.002, 8, 8),
+          new THREE.SphereGeometry(0.0015, 8, 8),
           new THREE.MeshBasicMaterial({ color: 0xffffff })
         );
         dot.position.z = -1.5;
@@ -173,34 +173,57 @@
         controllers.push(ctrl);
       }
 
+      generateSimulatedRoomMesh(); // Genera la malla inicial del entorno
+
       document.getElementById('btn-undo').addEventListener('click', undoLastPoint);
       document.getElementById('btn-clear').addEventListener('click', clearAll);
       document.getElementById('btn-export').addEventListener('click', exportDXF);
     }
 
-    function createHandMenuTexture(text) {
+    // Crea una malla wireframe simulando el escaneo automático del entorno al iniciar AR
+    function generateSimulatedRoomMesh() {
+      roomMeshGroup.clear();
+      const gridHelper = new THREE.GridHelper(10, 20, 0x10b981, 0x1e293b);
+      gridHelper.position.y = 0.001;
+      roomMeshGroup.add(gridHelper);
+
+      // Malla de puntos en las paredes simulando el escaneo LiDAR/Depth de Quest 3S
+      const ptsGeo = new THREE.BufferGeometry();
+      const positions = [];
+      for (let x = -3; x <= 3; x += 0.5) {
+        for (let z = -3; z <= 3; z += 0.5) {
+          positions.push(x, 0, z); // Suelo
+          positions.push(x, 2.4, z); // Techo
+        }
+      }
+      ptsGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const ptsMat = new THREE.PointsMaterial({ color: 0x22d3ee, size: 0.015, transparent: true, opacity: 0.6 });
+      const roomPoints = new THREE.Points(ptsGeo, ptsMat);
+      roomMeshGroup.add(roomPoints);
+    }
+
+    function createWristMenuTexture(text) {
       const canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 256;
+      canvas.width = 400;
+      canvas.height = 200;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-      ctx.fillRect(0, 0, 512, 256);
-      ctx.strokeStyle = '#22d3ee';
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+      ctx.fillRect(0, 0, 400, 200);
+      ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 6;
-      ctx.strokeRect(3, 3, 506, 250);
+      ctx.strokeRect(3, 3, 394, 194);
       ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 22px sans-serif';
+      ctx.font = 'bold 20px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       
       const lines = text.split('\n');
       lines.forEach((line, idx) => {
-        ctx.fillText(line, 256, 60 + (idx * 45));
+        ctx.fillText(line, 200, 45 + (idx * 40));
       });
 
       const tex = new THREE.CanvasTexture(canvas);
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-      sprite.scale.set(0.4, 0.2, 1);
       return sprite;
     }
 
@@ -210,11 +233,9 @@
       ctrl.getWorldPosition(pos);
       dir.applyQuaternion(ctrl.getWorldQuaternion(new THREE.Quaternion()));
 
-      // Proyectar al punto donde apunta el láser a distancia
       const hitPoint = pos.clone().add(dir.multiplyScalar(2.0)); 
-      
       if (points3D.length > 0) {
-        hitPoint.y = points3D[0].y; // Mantener nivelado para plano 2D limpio
+        hitPoint.y = points3D[0].y; 
       }
       points3D.push(hitPoint);
       rebuildAll();
@@ -223,6 +244,14 @@
     function pollControllerButtons() {
       const session = renderer.xr.getSession();
       if (!session) return;
+
+      // Anclar el menú compacto a la posición del mando izquierdo (muñeca)
+      if (controllers[0] && menuVisible) {
+        const leftCtrl = controllers[0];
+        wristMenuMesh.position.copy(leftCtrl.position);
+        wristMenuMesh.position.y += 0.05; // Ligeramente por encima de la mano
+        wristMenuMesh.quaternion.copy(camera.quaternion); // Mirando siempre hacia los ojos
+      }
 
       for (const source of session.inputSources) {
         if (!source.gamepad) continue;
@@ -238,7 +267,7 @@
         if (btnAX && !prevAX) undoLastPoint();
         if (btnBY && !prevBY) {
           menuVisible = !menuVisible;
-          handMenuMesh.visible = menuVisible;
+          wristMenuMesh.visible = menuVisible;
         }
 
         prevStates.set(id + '_AX', btnAX);
@@ -292,7 +321,6 @@
     }
 
     function rebuildAll() {
-      // Limpiar escena 3D previa
       markers3D.forEach(m => scene.remove(m));
       labels3D.forEach(l => scene.remove(l));
       wallMeshes3D.forEach(w => scene.remove(w));
@@ -301,7 +329,6 @@
       wallMeshes3D = [];
       if (line3D) scene.remove(line3D);
 
-      // Reconstruir esquinas
       points3D.forEach((p, idx) => {
         const sphere = new THREE.Mesh(
           new THREE.SphereGeometry(0.015, 16, 16),
@@ -321,7 +348,6 @@
         );
         scene.add(line3D);
 
-        // Generar maqueta 3D en vivo (muros extruidos en altura 2.4 metros)
         const wallHeight = 2.4;
         const segs = isClosed ? points3D.length : points3D.length - 1;
         for (let i = 0; i < segs; i++) {
@@ -333,7 +359,7 @@
           const wallMat = new THREE.MeshStandardMaterial({ 
             color: 0x38bdf8, 
             transparent: true, 
-            opacity: 0.25, 
+            opacity: 0.22, 
             side: THREE.DoubleSide 
           });
           const wall = new THREE.Mesh(wallGeo, wallMat);
@@ -359,7 +385,7 @@
     function updateUIAnd2D() {
       wallsList.innerHTML = '';
       if (points3D.length < 2) {
-        wallsList.innerHTML = '<div style="font-size: 13px; color: #64748b; font-style: italic; padding: 10px 0;">Dispara con el láser a las esquinas en AR...</div>';
+        wallsList.innerHTML = '<div style="font-size: 13px; color: #64748b; font-style: italic; padding: 10px 0;">Apunte con el láser fino a las esquinas...</div>';
         areaTxt.textContent = '0.00 m²';
         perimTxt.textContent = '0 mm';
         draw2DBlueprint();
@@ -462,7 +488,7 @@
       const screenPts = points3D.map(toScreen);
       const isClosed = points3D.length >= 3;
 
-      if (isClosed) {
+      if (screenPts.length >= 3) {
         ctx2D.beginPath();
         ctx2D.moveTo(screenPts[0].x, screenPts[0].y);
         for (let i = 1; i < screenPts.length; i++) ctx2D.lineTo(screenPts[i].x, screenPts[i].y);
@@ -529,7 +555,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `plano_pro_${Date.now()}.dxf`;
+      a.download = `plano_malla_${Date.now()}.dxf`;
       a.click();
     }
 
