@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quest 3S - Medidor CAD en mm</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background-color: #090d16; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; overflow-x: hidden; }
+    .container { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
+    @media (max-width: 800px) { .container { grid-template-columns: 1fr; height: auto; } }
+    
+    /* Panel Lateral de Control y Edición */
+    #ui-panel {
+      background: #0f172a; padding: 20px; border-right: 1px solid #1e293b;
+      overflow-y: auto; z-index: 10; display: flex; flex-direction: column; gap: 14px;
+    }
+    h1 { margin: 0; color: #22d3ee; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+    .badge { background: #083344; color: #67e8f9; font-size: 11px; padding: 2px 8px; border-radius: 99px; border: 1px solid #0e7490; }
+    .guide-box { background: #1e293b; padding: 12px; border-radius: 10px; font-size: 13px; color: #cbd5e1; line-height: 1.5; border-left: 4px solid #22d3ee; }
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat-card { background: #090d16; padding: 10px 12px; border-radius: 8px; border: 1px solid #1e293b; }
+    .stat-label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+    .stat-value { font-size: 16px; font-weight: bold; margin-top: 2px; font-family: monospace; }
+    
+    #walls-list { display: flex; flex-direction: column; gap: 8px; max-height: 35vh; overflow-y: auto; padding-right: 4px; }
+    .wall-row { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; }
+    .wall-row span { font-size: 13px; font-weight: 700; color: #38bdf8; }
+    .wall-row input { background: #090d16; border: 1px solid #0284c7; color: #fff; padding: 6px 8px; border-radius: 6px; width: 95px; text-align: right; font-family: monospace; font-size: 14px; font-weight: bold; }
+    
+    .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; }
+    button { padding: 11px 12px; border: none; border-radius: 8px; font-weight: bold; font-size: 13px; cursor: pointer; transition: 0.15s; }
+    button:active { transform: scale(0.98); }
+    .btn-undo { background: #334155; color: #f8fafc; }
+    .btn-clear { background: #7f1d1d; color: #fecaca; }
+    .btn-export { grid-column: span 2; background: #10b981; color: #052e16; font-size: 14px; }
+
+    /* Lienzo 2D de Vista Previa del Boceto Arquitectónico */
+    #preview-area { position: relative; background: #090d16; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 420px; }
+    #cad-2d { width: 100%; height: 100%; background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 24px 24px; }
+    .canvas-title { position: absolute; top: 14px; left: 18px; font-size: 12px; color: #64748b; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Panel de Edición y Control -->
+    <div id="ui-panel">
+      <h1>📐 Quest 3S CAD <span class="badge">Unidad: mm</span></h1>
+      
+      <div class="guide-box">
+        <b>Controles dentro de Realidad Mixta:</b><br>
+        • <b>Gatillo (Índice):</b> Marcar esquina en el espacio.<br>
+        • <b>Botón A o X:</b> Deshacer último punto.<br>
+        • <b>Botón B o Y:</b> Borrar todo.<br>
+        • <b>Botón Meta:</b> Salir al plano 2D para editar cotas o descargar DXF.
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Superficie</div>
+          <div id="area-txt" class="stat-value" style="color:#34d399">0.00 m²</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Perímetro Total</div>
+          <div id="perim-txt" class="stat-value" style="color:#22d3ee">0 mm</div>
+        </div>
+      </div>
+
+      <div style="font-size: 12px; font-weight: bold; color: #94a3b8; text-transform: uppercase;">
+        Cotas de Muros (Modificables en mm):
+      </div>
+      <div id="walls-list">
+        <div style="font-size: 13px; color: #64748b; font-style: italic; padding: 10px 0;">
+          Entra en modo AR con el botón inferior o haz clic en el lienzo derecho para probar...
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-undo" class="btn-undo">↩ Deshacer</button>
+        <button id="btn-clear" class="btn-clear">🗑 Limpiar</button>
+        <button id="btn-export" class="btn-export">⬇ Descargar Plano CAD (.DXF en mm)</button>
+      </div>
+    </div>
+
+    <!-- Vista Previa del Boceto Arquitectónico 2D -->
+    <div id="preview-area">
+      <div class="canvas-title">VISTA DE PLANTA ARQUITECTÓNICA (ESCALA AUTOMÁTICA EN MM)</div>
+      <canvas id="cad-2d"></canvas>
+    </div>
+  </div>
+
+  <!-- Contenedor oculto para el motor WebXR 3D -->
+  <div id="xr-container" style="display:none;"></div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+    let scene, camera, renderer;
+    let controllers = [];
+    let points3D = []; // Coordenadas niveladas en metros (1m = 1000mm)
+    let markers3D = [];
+    let labels3D = [];
+    let line3D = null;
+    let hudSprite = null;
+    let prevButtonStates = new Map();
+
+    // Elementos DOM
+    const wallsList = document.getElementById('walls-list');
+    const areaTxt = document.getElementById('area-txt');
+    const perimTxt = document.getElementById('perim-txt');
+    const canvas2D = document.getElementById('cad-2d');
+    const ctx2D = canvas2D.getContext('2d');
+
+    initXR();
+    init2DCanvas();
+    animate();
+
+    function initXR() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 30);
+      scene.add(camera);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.getElementById('xr-container').appendChild(renderer.domElement);
+
+      scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3));
+
+      // Crear HUD 3D sujeto a la vista para guiar dentro de las gafas
+      hudSprite = createHUDSprite("Gatillo: Marcar esquina | A/X: Deshacer | Total: 0 puntos");
+      hudSprite.position.set(0, 0.22, -0.85);
+      camera.add(hudSprite);
+
+      // Botón oficial de inicio de Realidad Mixta para Quest 3S
+      const arBtn = ARButton.createButton(renderer, {
+        requiredFeatures: ['local-floor']
+      });
+      arBtn.style.backgroundColor = '#06b6d4';
+      arBtn.style.color = '#082f49';
+      arBtn.style.fontWeight = 'bold';
+      arBtn.style.border = '2px solid #cffafe';
+      document.body.appendChild(arBtn);
+
+      // Configurar ambos mandos Touch Plus (0 y 1)
+      for (let i = 0; i < 2; i++) {
+        const ctrl = renderer.xr.getController(i);
+        ctrl.addEventListener('selectstart', () => onTriggerPress(ctrl));
+        
+        // Esfera cian en la punta exacta del mando (12 mm de radio)
+        const tip = new THREE.Mesh(
+          new THREE.SphereGeometry(0.012, 16, 16),
+          new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+        );
+        ctrl.add(tip);
+        scene.add(ctrl);
+        controllers.push(ctrl);
+      }
+
+      document.getElementById('btn-undo').addEventListener('click', undoLastPoint);
+      document.getElementById('btn-clear').addEventListener('click', clearAll);
+      document.getElementById('btn-export').addEventListener('click', exportDXF);
+    }
+
+    // Al presionar el gatillo en cualquier mando
+    function onTriggerPress(ctrl) {
+      const pos = new THREE.Vector3();
+      ctrl.getWorldPosition(pos);
+
+      // Nivelar la altura (Y) con el primer punto para obtener un plano arquitectónico 2D puro
+      if (points3D.length > 0) {
+        pos.y = points3D[0].y;
+      }
+      points3D.push(pos.clone());
+      rebuildAll();
+    }
+
+    // Leer botones A/B o X/Y de los mandos de Meta Quest
+    function pollControllerButtons() {
+      const session = renderer.xr.getSession();
+      if (!session) return;
+
+      for (const source of session.inputSources) {
+        if (!source.gamepad) continue;
+        const gp = source.gamepad;
+        const id = source.handedness;
+
+        // Botón A / X suele ser el índice 4 en WebXR para Meta Quest
+        const btnAX = gp.buttons[4]?.pressed || false;
+        const btnBY = gp.buttons[5]?.pressed || false;
+
+        const prevAX = prevButtonStates.get(id + '_AX') || false;
+        const prevBY = prevButtonStates.get(id + '_BY') || false;
+
+        if (btnAX && !prevAX) undoLastPoint();
+        if (btnBY && !prevBY) clearAll();
+
+        prevButtonStates.set(id + '_AX', btnAX);
+        prevButtonStates.set(id + '_BY', btnBY);
+      }
+    }
+
+    function createHUDSprite(text) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 80;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(0, 0, 640, 80);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(2, 2, 636, 76);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 320, 40);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(0.55, 0.07, 1);
+      return sprite;
+    }
+
+    function updateHUDText() {
+      if (!hudSprite) return;
+      camera.remove(hudSprite);
+      const count = points3D.length;
+      const msg = count === 0
+        ? "Apoya el mando en una esquina y pulsa el Gatillo"
+        : `Esquinas: ${count} | Perímetro: ${getPerimeterMm()} mm | (A/X: Deshacer)`;
+      hudSprite = createHUDSprite(msg);
+      hudSprite.position.set(0, 0.22, -0.85);
+      camera.add(hudSprite);
+    }
+
+    function createWallLabel3D(text) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 280;
+      canvas.height = 70;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(9, 13, 22, 0.9)';
+      ctx.fillRect(0, 0, 280, 70);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(2, 2, 276, 66);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 28px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 140, 35);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+      sprite.scale.set(0.32, 0.08, 1);
+      return sprite;
+    }
+
+    function undoLastPoint() {
+      if (points3D.length > 0) {
+        points3D.pop();
+        rebuildAll();
+      }
+    }
+
+    function clearAll() {
+      points3D = [];
+      rebuildAll();
+    }
+
+    function getPerimeterMm() {
+      if (points3D.length < 2) return 0;
+      let total = 0;
+      const isClosed = points3D.length >= 3;
+      const segs = isClosed ? points3D.length : points3D.length - 1;
+      for (let i = 0; i < segs; i++) {
+        total += Math.round(points3D[i].distanceTo(points3D[(i + 1) % points3D.length]) * 1000);
+      }
+      return total;
+    }
+
+    function rebuildAll() {
+      // 1. Limpiar escena 3D
+      markers3D.forEach(m => scene.remove(m));
+      labels3D.forEach(l => scene.remove(l));
+      markers3D = [];
+      labels3D = [];
+      if (line3D) scene.remove(line3D);
+
+      // 2. Reconstruir objetos 3D en Realidad Mixta
+      points3D.forEach((p, idx) => {
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(0.022, 16, 16),
+          new THREE.MeshStandardMaterial({ color: idx === 0 ? 0x10b981 : 0x22d3ee })
+        );
+        sphere.position.copy(p);
+        scene.add(sphere);
+        markers3D.push(sphere);
+      });
+
+      if (points3D.length >= 2) {
+        const isClosed = points3D.length >= 3;
+        const loopPts = isClosed ? [...points3D, points3D[0]] : points3D;
+        line3D = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(loopPts),
+          new THREE.LineBasicMaterial({ color: 0x22d3ee, linewidth: 4 })
+        );
+        scene.add(line3D);
+
+        const segs = isClosed ? points3D.length : points3D.length - 1;
+        for (let i = 0; i < segs; i++) {
+          const p1 = points3D[i];
+          const p2 = points3D[(i + 1) % points3D.length];
+          const mm = Math.round(p1.distanceTo(p2) * 1000);
+          const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+          mid.y += 0.07; // 70 mm sobre la línea
+          const lbl = createWallLabel3D(`M${i + 1}: ${mm} mm`);
+          lbl.position.copy(mid);
+          scene.add(lbl);
+          labels3D.push(lbl);
+        }
+      }
+
+      updateHUDText();
+      updateUIAnd2D();
+    }
+
+    // 3. Actualizar lista de muros editables y el plano 2D
+    function updateUIAnd2D() {
+      wallsList.innerHTML = '';
+      if (points3D.length < 2) {
+        wallsList.innerHTML = '<div style="font-size: 13px; color: #64748b; font-style: italic; padding: 10px 0;">Marca al menos 2 esquinas en AR o haz clic en el lienzo derecho...</div>';
+        areaTxt.textContent = '0.00 m²';
+        perimTxt.textContent = '0 mm';
+        draw2DBlueprint();
+        return;
+      }
+
+      const isClosed = points3D.length >= 3;
+      const segs = isClosed ? points3D.length : points3D.length - 1;
+      const perimMm = getPerimeterMm();
+      perimTxt.textContent = `${perimMm.toLocaleString()} mm`;
+
+      for (let i = 0; i < segs; i++) {
+        const p1 = points3D[i];
+        const p2 = points3D[(i + 1) % points3D.length];
+        const distMm = Math.round(p1.distanceTo(p2) * 1000);
+
+        const row = document.createElement('div');
+        row.className = 'wall-row';
+        row.innerHTML = `
+          <span>Muro ${i + 1}</span>
+          <div>
+            <input type="number" value="${distMm}" data-idx="${i}">
+            <small style="color:#94a3b8; margin-left:4px;">mm</small>
+          </div>
+        `;
+        wallsList.appendChild(row);
+      }
+
+      // Calcular Área en m²
+      if (isClosed) {
+        let areaM2 = 0;
+        for (let i = 0; i < points3D.length; i++) {
+          const j = (i + 1) % points3D.length;
+          areaM2 += points3D[i].x * points3D[j].z;
+          areaM2 -= points3D[j].x * points3D[i].z;
+        }
+        areaM2 = Math.abs(areaM2) / 2;
+        areaTxt.textContent = `${areaM2.toFixed(2)} m²`;
+      } else {
+        areaTxt.textContent = '0.00 m²';
+      }
+
+      // Cuando el usuario modifica una medida en milímetros manualmente
+      wallsList.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          const newMm = parseFloat(e.target.value);
+          if (!newMm || newMm <= 0) return;
+
+          const p1 = points3D[idx];
+          const p2Idx = (idx + 1) % points3D.length;
+          const p2 = points3D[p2Idx];
+
+          const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+          points3D[p2Idx].copy(p1).add(dir.multiplyScalar(newMm / 1000));
+          rebuildAll();
+        });
+      });
+
+      draw2DBlueprint();
+    }
+
+    // Lienzo 2D interactivo (también permite probar haciendo clic con el ratón o el puntero del navegador)
+    function init2DCanvas() {
+      const resize = () => {
+        canvas2D.width = canvas2D.parentElement.clientWidth;
+        canvas2D.height = canvas2D.parentElement.clientHeight;
+        draw2DBlueprint();
+      };
+      window.addEventListener('resize', resize);
+      setTimeout(resize, 50);
+
+      // Permitir agregar puntos en el lienzo 2D para probar sin entrar en AR
+      canvas2D.addEventListener('pointerdown', (e) => {
+        const rect = canvas2D.getBoundingClientRect();
+        const px = e.clientX - rect.left - canvas2D.width / 2;
+        const py = e.clientY - rect.top - canvas2D.height / 2;
+        // En modo prueba 2D: 100 píxeles = 1000 mm (1 metro)
+        points3D.push(new THREE.Vector3(px / 100, 0, py / 100));
+        rebuildAll();
+      });
+    }
+
+    function draw2DBlueprint() {
+      ctx2D.clearRect(0, 0, canvas2D.width, canvas2D.height);
+      if (points3D.length === 0) return;
+
+      // Auto-escalar para que el plano siempre encaje centrado en la pizarra 2D
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      points3D.forEach(p => {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.z < minZ) minZ = p.z;
+        if (p.z > maxZ) maxZ = p.z;
+      });
+
+      const spanX = Math.max(maxX - minX, 0.5);
+      const spanZ = Math.max(maxZ - minZ, 0.5);
+      const padding = 80;
+      const scale = Math.min((canvas2D.width - padding * 2) / spanX, (canvas2D.height - padding * 2) / spanZ);
+
+      const toScreen = (p) => ({
+        x: canvas2D.width / 2 + (p.x - (minX + maxX) / 2) * scale,
+        y: canvas2D.height / 2 + (p.z - (minZ + maxZ) / 2) * scale
+      });
+
+      const screenPts = points3D.map(toScreen);
+      const isClosed = points3D.length >= 3;
+
+      if (isClosed) {
+        ctx2D.beginPath();
+        ctx2D.moveTo(screenPts[0].x, screenPts[0].y);
+        for (let i = 1; i < screenPts.length; i++) ctx2D.lineTo(screenPts[i].x, screenPts[i].y);
+        ctx2D.closePath();
+        ctx2D.fillStyle = 'rgba(34, 211, 238, 0.1)';
+        ctx2D.fill();
+      }
+
+      const segs = isClosed ? screenPts.length : screenPts.length - 1;
+      for (let i = 0; i < segs; i++) {
+        const s1 = screenPts[i];
+        const s2 = screenPts[(i + 1) % screenPts.length];
+        const mm = Math.round(points3D[i].distanceTo(points3D[(i + 1) % points3D.length]) * 1000);
+
+        ctx2D.beginPath();
+        ctx2D.moveTo(s1.x, s1.y);
+        ctx2D.lineTo(s2.x, s2.y);
+        ctx2D.strokeStyle = '#22d3ee';
+        ctx2D.lineWidth = 3;
+        ctx2D.stroke();
+
+        // Etiqueta en el plano 2D
+        const mx = (s1.x + s2.x) / 2;
+        const my = (s1.y + s2.y) / 2;
+        const txt = `M${i + 1}: ${mm} mm`;
+        ctx2D.font = 'bold 12px monospace';
+        const tw = ctx2D.measureText(txt).width;
+        ctx2D.fillStyle = '#0f172a';
+        ctx2D.fillRect(mx - tw / 2 - 6, my - 11, tw + 12, 22);
+        ctx2D.strokeStyle = '#0284c7';
+        ctx2D.lineWidth = 1;
+        ctx2D.strokeRect(mx - tw / 2 - 6, my - 11, tw + 12, 22);
+        ctx2D.fillStyle = '#f8fafc';
+        ctx2D.textAlign = 'center';
+        ctx2D.textBaseline = 'middle';
+        ctx2D.fillText(txt, mx, my);
+      }
+
+      screenPts.forEach((s, idx) => {
+        ctx2D.beginPath();
+        ctx2D.arc(s.x, s.y, 6, 0, Math.PI * 2);
+        ctx2D.fillStyle = idx === 0 ? '#10b981' : '#f8fafc';
+        ctx2D.fill();
+      });
+    }
+
+    // Exportador a archivo CAD (.DXF) en milímetros
+    function exportDXF() {
+      if (points3D.length < 2) return alert('Marca al menos 2 esquinas antes de descargar el plano DXF.');
+      let dxf = "0\nSECTION\n2\nENTITIES\n";
+      const segs = points3D.length >= 3 ? points3D.length : points3D.length - 1;
+
+      for (let i = 0; i < segs; i++) {
+        const p1 = points3D[i];
+        const p2 = points3D[(i + 1) % points3D.length];
+        const x1 = (p1.x * 1000).toFixed(2);
+        const y1 = (-p1.z * 1000).toFixed(2); // Invertir Z para vista superior CAD estándar
+        const x2 = (p2.x * 1000).toFixed(2);
+        const y2 = (-p2.z * 1000).toFixed(2);
+
+        dxf += `0\nLINE\n8\nMUROS_MM\n10\n${x1}\n20\n${y1}\n30\n0.0\n11\n${x2}\n21\n${y2}\n31\n0.0\n`;
+      }
+      dxf += "0\nENDSEC\n0\nEOF\n";
+
+      const blob = new Blob([dxf], { type: 'application/dxf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `plano_quest_${Date.now()}.dxf`;
+      a.click();
+    }
+
+    function animate() {
+      renderer.setAnimationLoop(() => {
+        pollControllerButtons();
+        renderer.render(scene, camera);
+      });
+    }
+  </script>
+</body>
+</html>
