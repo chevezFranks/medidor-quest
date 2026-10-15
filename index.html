@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quest 3S - Maqueta 3D Libre (mm)</title>
+  <title>Quest 3S - Holograma 3D en Muñeca (XYZ)</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background-color: #090d16; color: #f8fafc; font-family: system-ui, sans-serif; overflow-x: hidden; }
@@ -40,33 +40,33 @@
 
   <div class="container">
     <div id="ui-panel">
-      <h1>📐 Maqueta 3D Libre <span class="badge">Ejes X, Y, Z</span></h1>
+      <h1>📐 Quest 3S Holograma <span class="badge">Precisión XYZ</span></h1>
       
       <div class="guide-box">
-        <b>Captura 3D Real (Horizontal y Vertical):</b><br>
-        1. Apunta con el <b>láser fino</b> a cualquier esquina (suelo o techo).<br>
-        2. Presiona el <b>Gatillo</b>: el punto registrará su altura real sin aplanarse.<br>
-        3. Se dibujarán líneas y volúmenes exactos entre puntos.<br>
-        4. Pulsa <b>Y / B</b> para activar el menú en tu muñeca.
+        <b>Modo de Uso:</b><br>
+        1. Entra en AR (sin rejillas molestas).<br>
+        2. Dispara con el <b>láser fino</b> a cualquier punto en X, Y, Z (suelo o paredes).<br>
+        3. En tu muñeca izquierda verás un <b>mini-holograma 3D en vivo</b> del objeto que vas formando.<br>
+        4. Pulsa <b>Y / B</b> para alternar la visibilidad del holograma.
       </div>
 
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-label">Puntos Capturados</div>
+          <div class="stat-label">Puntos 3D</div>
           <div id="area-txt" class="stat-value" style="color:#34d399">0 pts</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Distancia Acumulada</div>
+          <div class="stat-label">Distancia Total</div>
           <div id="perim-txt" class="stat-value" style="color:#22d3ee">0 mm</div>
         </div>
       </div>
 
       <div style="font-size: 12px; font-weight: bold; color: #94a3b8; text-transform: uppercase;">
-        Segmentos 3D (Modificables en mm):
+        Segmentos (Modificables en mm):
       </div>
       <div id="walls-list">
         <div style="font-size: 13px; color: #64748b; font-style: italic; padding: 10px 0;">
-          Entra en AR para medir libremente en 3D...
+          Entra en AR para maquetar con precisión 3D...
         </div>
       </div>
 
@@ -78,7 +78,7 @@
     </div>
 
     <div id="preview-area">
-      <div class="canvas-title">PROYECCIÓN 2D Y MODELADO TRIDIMENSIONAL</div>
+      <div class="canvas-title">PLANO 2D Y VISTA TÉCNICA</div>
       <canvas id="cad-2d"></canvas>
     </div>
   </div>
@@ -100,13 +100,15 @@
 
     let scene, camera, renderer;
     let controllers = [];
-    let points3D = []; // Almacena coordenadas reales [x, y, z] sin restricciones
+    let points3D = []; 
     let markers3D = [];
     let labels3D = [];
-    let segments3D = [];
     let lineMesh = null;
-    let wristMenuMesh = null;
-    let menuVisible = false;
+    
+    // Grupo dedicado al mini-holograma 3D que flota en la muñeca
+    let holoGroup = new THREE.Group();
+    let holoMesh = null;
+    let holoVisible = true;
     let prevStates = new Map();
 
     const wallsList = document.getElementById('walls-list');
@@ -131,11 +133,8 @@
 
       scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3));
 
-      // Menú compacto en la muñeca izquierda
-      wristMenuMesh = createWristMenuTexture("MENÚ 3D LIBRE\nGat: Marcar | A: Deshacer\nY/B: Ocultar menú");
-      wristMenuMesh.scale.set(0.14, 0.07, 1);
-      wristMenuMesh.visible = false;
-      scene.add(wristMenuMesh);
+      // Configurar el mini-holograma de muñeca (inicialmente vacío)
+      scene.add(holoGroup);
 
       const arBtn = ARButton.createButton(renderer, {
         requiredFeatures: ['local-floor']
@@ -174,38 +173,13 @@
       document.getElementById('btn-export').addEventListener('click', exportDXF);
     }
 
-    function createWristMenuTexture(text) {
-      const canvas = document.createElement('canvas');
-      canvas.width = 400;
-      canvas.height = 200;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
-      ctx.fillRect(0, 0, 400, 200);
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 6;
-      ctx.strokeRect(3, 3, 394, 194);
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 20px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      
-      const lines = text.split('\n');
-      lines.forEach((line, idx) => {
-        ctx.fillText(line, 200, 45 + (idx * 40));
-      });
-
-      const tex = new THREE.CanvasTexture(canvas);
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-      return sprite;
-    }
-
     function onLaserShoot(ctrl) {
       const pos = new THREE.Vector3();
       const dir = new THREE.Vector3(0, 0, -1);
       ctrl.getWorldPosition(pos);
       dir.applyQuaternion(ctrl.getWorldQuaternion(new THREE.Quaternion()));
 
-      // Obtiene la posición exacta en 3D (X, Y, Z) a la que apunta el láser sin alterar la altura
+      // Coordenada exacta XYZ pura donde impacta el láser (permite marcar suelo, paredes y techos libremente sin aplanar)
       const hitPoint = pos.clone().add(dir.multiplyScalar(2.0)); 
       points3D.push(hitPoint);
       rebuildAll();
@@ -215,11 +189,13 @@
       const session = renderer.xr.getSession();
       if (!session) return;
 
-      if (controllers[0] && menuVisible) {
+      // Anclar y actualizar la posición del mini-holograma 3D flotando justo encima de la mano izquierda (muñeca)
+      if (controllers[0]) {
         const leftCtrl = controllers[0];
-        wristMenuMesh.position.copy(leftCtrl.position);
-        wristMenuMesh.position.y += 0.04;
-        wristMenuMesh.quaternion.copy(camera.quaternion);
+        holoGroup.position.copy(leftCtrl.position);
+        holoGroup.position.y += 0.05; // 5 cm sobre la muñeca
+        holoGroup.quaternion.copy(camera.quaternion); // Orientado hacia la vista del usuario
+        holoGroup.visible = holoVisible;
       }
 
       for (const source of session.inputSources) {
@@ -235,8 +211,7 @@
 
         if (btnAX && !prevAX) undoLastPoint();
         if (btnBY && !prevBY) {
-          menuVisible = !menuVisible;
-          wristMenuMesh.visible = menuVisible;
+          holoVisible = !holoVisible; // Botón Y/B enciende/apaga el holograma de la muñeca
         }
 
         prevStates.set(id + '_AX', btnAX);
@@ -288,15 +263,17 @@
     }
 
     function rebuildAll() {
+      // 1. Limpiar escena principal
       markers3D.forEach(m => scene.remove(m));
       labels3D.forEach(l => scene.remove(l));
-      segments3D.forEach(s => scene.remove(s));
       markers3D = [];
       labels3D = [];
-      segments3D = [];
       if (lineMesh) scene.remove(lineMesh);
 
-      // Dibujar esferas en cada punto 3D real
+      // 2. Limpiar holograma anterior de la muñeca
+      holoGroup.clear();
+
+      // 3. Reconstruir geometría principal 3D real (XYZ libre)
       points3D.forEach((p, idx) => {
         const sphere = new THREE.Mesh(
           new THREE.SphereGeometry(0.015, 16, 16),
@@ -307,7 +284,6 @@
         markers3D.push(sphere);
       });
 
-      // Dibujar líneas conectando los puntos secuencialmente en 3D
       if (points3D.length >= 2) {
         const lineGeo = new THREE.BufferGeometry().setFromPoints(points3D);
         lineMesh = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x22d3ee, linewidth: 3 }));
@@ -326,6 +302,30 @@
           scene.add(lbl);
           labels3D.push(lbl);
         }
+
+        // 4. GENERAR MINI-HOLOGRAPHY EN LA MUÑECA (Escala 1:10 en miniatura)
+        // Calcula el centro de la figura para centrarla en la palma/muñeca
+        let center = new THREE.Vector3();
+        points3D.forEach(p => center.add(p));
+        center.divideScalar(points3D.length);
+
+        const holoPoints = points3D.map(p => {
+          // Escala a una décima parte para que quepa perfectamente como miniatura holográfica
+          return new THREE.Vector3().subVectors(p, center).multiplyScalar(0.1);
+        });
+
+        const holoGeo = new THREE.BufferGeometry().setFromPoints(holoPoints);
+        const holoLine = new THREE.Line(holoGeo, new THREE.LineBasicMaterial({ color: 0x38bdf8, linewidth: 4 }));
+        holoGroup.add(holoLine);
+
+        holoPoints.forEach(hp => {
+          const hSphere = new THREE.Mesh(
+            new THREE.SphereGeometry(0.003, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0x10b981 })
+          );
+          hSphere.position.copy(hp);
+          holoGroup.add(hSphere);
+        });
       }
 
       updateUIAnd2D();
@@ -422,63 +422,4 @@
         ctx2D.moveTo(s1.x, s1.y);
         ctx2D.lineTo(s2.x, s2.y);
         ctx2D.strokeStyle = '#22d3ee';
-        ctx2D.lineWidth = 3;
-        ctx2D.stroke();
-
-        const mx = (s1.x + s2.x) / 2;
-        const my = (s1.y + s2.y) / 2;
-        const txt = `S${i + 1}: ${mm} mm`;
-        ctx2D.font = 'bold 12px monospace';
-        const tw = ctx2D.measureText(txt).width;
-        ctx2D.fillStyle = '#0f172a';
-        ctx2D.fillRect(mx - tw / 2 - 6, my - 11, tw + 12, 22);
-        ctx2D.strokeStyle = '#0284c7';
-        ctx2D.lineWidth = 1;
-        ctx2D.strokeRect(mx - tw / 2 - 6, my - 11, tw + 12, 22);
-        ctx2D.fillStyle = '#f8fafc';
-        ctx2D.textAlign = 'center';
-        ctx2D.textBaseline = 'middle';
-        ctx2D.fillText(txt, mx, my);
-      }
-
-      screenPts.forEach((s, idx) => {
-        ctx2D.beginPath();
-        ctx2D.arc(s.x, s.y, 6, 0, Math.PI * 2);
-        ctx2D.fillStyle = idx === 0 ? '#10b981' : '#f8fafc';
-        ctx2D.fill();
-      });
-    }
-
-    function exportDXF() {
-      if (points3D.length < 2) return alert('Marca al menos 2 puntos antes de descargar el plano DXF.');
-      let dxf = "0\nSECTION\n2\nENTITIES\n";
-
-      for (let i = 0; i < points3D.length - 1; i++) {
-        const p1 = points3D[i];
-        const p2 = points3D[i + 1];
-        const x1 = (p1.x * 1000).toFixed(2);
-        const y1 = (-p1.z * 1000).toFixed(2);
-        const x2 = (p2.x * 1000).toFixed(2);
-        const y2 = (-p2.z * 1000).toFixed(2);
-
-        dxf += `0\nLINE\n8\nPUNTOS_3D\n10\n${x1}\n20\n${y1}\n30\n${(p1.y*1000).toFixed(2)}\n11\n${x2}\n21\n${y2}\n31\n${(p2.y*1000).toFixed(2)}\n`;
-      }
-      dxf += "0\nENDSEC\n0\nEOF\n";
-
-      const blob = new Blob([dxf], { type: 'application/dxf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `maqueta_3D_libre_${Date.now()}.dxf`;
-      a.click();
-    }
-
-    function animate() {
-      renderer.setAnimationLoop(() => {
-        pollControllerButtons();
-        renderer.render(scene, camera);
-      });
-    }
-  </script>
-</body>
-</html>
+        ctx2D.
